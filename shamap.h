@@ -84,6 +84,7 @@ public:
 
     bool isEmptyBranch (int m) const {return (isBranch_ & (1 << m)) == 0;}
     SHAMapAbstractNode* getChildPointer(int m) const {return children_[m].get();}
+    std::shared_ptr<SHAMapAbstractNode> firstChild() const;
     std::shared_ptr<SHAMapAbstractNode> getChild(int m) const {return children_[m];}
     void setChild(int branch, std::shared_ptr<SHAMapAbstractNode> const& child);
     void setChildren(std::shared_ptr<SHAMapTreeNode> const& child1,
@@ -93,6 +94,7 @@ public:
     unsigned get_common_prefix(uint256 const& key) const;
     void set_common(unsigned depth, uint256 const& common);
     uint256 const& common() const {return common_;}
+    unsigned numChildren() const;
 
     void display(std::ostream& os, unsigned indent) const override;
     void invariants(bool is_root = false) const override;
@@ -138,6 +140,7 @@ public:
     SHAMap();
 
     bool insert(SHAMapHash const& hash, SHAMapItem const& item);
+
     friend std::ostream& operator<<(std::ostream& os, SHAMap const& x);
 
     class const_iterator;
@@ -146,6 +149,8 @@ public:
 
     const_iterator findKey(uint256 const& id) const;
     const_iterator upper_bound(uint256 const& id) const;
+
+    const_iterator erase(const_iterator i);
 
     void display(std::ostream& os) const;
 
