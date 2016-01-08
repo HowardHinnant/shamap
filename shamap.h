@@ -132,8 +132,7 @@ SHAMapAbstractNode::isLeaf () const
 
 class SHAMap
 {
-    using NodeStack = std::stack<std::pair<SHAMapAbstractNode*, SHAMapNodeID>,
-                    std::vector<std::pair<SHAMapAbstractNode*, SHAMapNodeID>>>;
+    using NodeStack = std::vector<std::pair<SHAMapAbstractNode*, SHAMapNodeID>>;
 
     std::shared_ptr<SHAMapAbstractNode> root_;
 public:

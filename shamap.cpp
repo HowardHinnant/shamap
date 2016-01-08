@@ -282,7 +282,7 @@ SHAMap::peekFirstItem(NodeStack& stack) const
     if (!node)
     {
         while (!stack.empty())
-            stack.pop();
+            stack.pop_back();
         return nullptr;
     }
     return node->peekItem().get();
@@ -304,12 +304,11 @@ SHAMapItem const*
 SHAMap::peekNextItem(uint256 const& id, NodeStack& stack) const
 {
     assert(!stack.empty());
-    assert(stack.top().first->isLeaf());
-    stack.pop();
+    stack.pop_back();
     while (!stack.empty())
     {
-        auto node = stack.top().first;
-        auto nodeID = stack.top().second;
+        auto node = stack.back().first;
+        auto nodeID = stack.back().second;
         assert(!node->isLeaf());
         auto inner = static_cast<SHAMapInnerNode*>(node);
         for (auto i = selectBranch(nodeID.depth(), id) + 1; i < 16; ++i)
@@ -324,7 +323,7 @@ SHAMap::peekNextItem(uint256 const& id, NodeStack& stack) const
                 return leaf->peekItem().get();
             }
         }
-        stack.pop();
+        stack.pop_back();
     }
     // must be last item
     return nullptr;
@@ -337,11 +336,11 @@ SHAMap::firstBelow(SHAMapAbstractNode* node, NodeStack& stack) const
     if (node->isLeaf())
     {
         auto n = static_cast<SHAMapTreeNode*>(node);
-        stack.push({n, {64, n->peekItem()->key()}});
+        stack.push_back({n, {64, n->peekItem()->key()}});
         return n;
     }
     auto inner = static_cast<SHAMapInnerNode*>(node);
-    stack.push({inner, {inner->depth(), inner->common()}});
+    stack.push_back({inner, {inner->depth(), inner->common()}});
     for (int i = 0; i < 16;)
     {
         if (!inner->isEmptyBranch(i))
@@ -351,11 +350,11 @@ SHAMap::firstBelow(SHAMapAbstractNode* node, NodeStack& stack) const
             if (node->isLeaf())
             {
                 auto n = static_cast<SHAMapTreeNode*>(node);
-                stack.push({n, {64, n->peekItem()->key()}});
+                stack.push_back({n, {64, n->peekItem()->key()}});
                 return n;
             }
             inner = static_cast<SHAMapInnerNode*>(node);
-            stack.push({inner, {inner->depth(), inner->common()}});
+            stack.push_back({inner, {inner->depth(), inner->common()}});
             i = 0;  // scan all 16 branches of this new node
         }
         else
@@ -388,7 +387,7 @@ SHAMap::walkTowardsKey(uint256 const& id, NodeStack* stack) const
     assert(stack == nullptr || stack->empty());
     auto inNode = root_.get();
     if (stack != nullptr)
-        stack->push({inNode, {inNode->depth(), inNode->key()}});
+        stack->push_back({inNode, {inNode->depth(), inNode->key()}});
 
     while (!inNode->isLeaf())
     {
@@ -399,7 +398,7 @@ SHAMap::walkTowardsKey(uint256 const& id, NodeStack* stack) const
 
         inNode = descendThrow (inner, branch);
         if (stack != nullptr)
-            stack->push({inNode, {inNode->depth(), inNode->key()}});
+            stack->push_back({inNode, {inNode->depth(), inNode->key()}});
     }
     return static_cast<SHAMapTreeNode*>(inNode);
 }
@@ -424,7 +423,7 @@ SHAMap::upper_bound(uint256 const& id) const
     SHAMapAbstractNode* node;
     while (!stack.empty())
     {
-        std::tie(node, std::ignore) = stack.top();
+        std::tie(node, std::ignore) = stack.back();
         if (node->isLeaf())
         {
             auto leaf = static_cast<SHAMapTreeNode*>(node);
@@ -447,7 +446,7 @@ SHAMap::upper_bound(uint256 const& id) const
                 }
             }
         }
-        stack.pop();
+        stack.pop_back();
     }
     return end();
 }
@@ -520,21 +519,35 @@ SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
 SHAMap::const_iterator
 SHAMap::erase(const_iterator i)
 {
-    auto child = static_cast<SHAMapTreeNode*>(i.stack_.top().first);
-    i.stack_.pop();
-    auto parent = static_cast<SHAMapInnerNode*>(i.stack_.top().first);
-    auto& key = child->key();
+    auto ci = i.stack_.size() - 1;
+    assert(ci >= 1);
+    auto child = static_cast<SHAMapTreeNode*>(i.stack_[ci].first);
+    auto pi = ci - 1;
+    auto parent = static_cast<SHAMapInnerNode*>(i.stack_[pi].first);
+    auto key = child->key();
     auto branch = selectBranch(parent->depth(), key);
     parent->setChild(branch, nullptr);
     if (parent->numChildren() == 1 && parent->depth() > 0)
     {
+        assert(ci >= 2);
         auto only_child = parent->firstChild();
-        i.stack_.pop();
-        auto grand_parent = static_cast<SHAMapInnerNode*>(i.stack_.top().first);
+        auto child_branch = selectBranch(parent->depth(), only_child->key());
+        auto grand_parent = static_cast<SHAMapInnerNode*>(i.stack_[pi-1].first);
         auto& parent_key = parent->key();
-        branch = selectBranch(grand_parent->depth(), parent_key);
-        grand_parent->setChild(branch, only_child);
+        auto next_branch = selectBranch(grand_parent->depth(), parent_key);
+        grand_parent->setChild(next_branch, only_child);
+        if (child_branch > branch)
+        {
+            i.stack_.erase(i.stack_.end()-2, i.stack_.end());
+            i.item_ = firstBelow(only_child.get(), i.stack_)->peekItem().get();
+            return i;
+        }
+        else
+        {
+            i.stack_.erase(i.stack_.end()-2);
+        }
     }
+    i.item_ = i.map_->peekNextItem(key, i.stack_);
     return i;
 }
 
@@ -610,9 +623,10 @@ public:
 uint256
 make_key()
 {
-    static std::mt19937_64 eng{5};
+//     static std::mt19937_64 eng{5};
 //     static sequential eng{};
-//     static sequential256 eng{};
+    static sequential256 eng{};
+//     static sequential256_backwards eng{};
     uint256 a;
     for (unsigned i = 0; i < 4; ++i)
     {
@@ -633,10 +647,13 @@ main()
     for (int i = 0; i < 100000; ++i)
         keys.push_back(make_key());    
     SHAMap m;
+    std::size_t sz = 0;
     for (auto const& k : keys)
     {
         m.insert({0}, {k, {}});
         m.invariants();
+        ++sz;
+        assert(std::distance(m.begin(), m.end()) == sz);
     }
 //     m.display(std::cout);
 //     std::cout << '\n';
@@ -645,8 +662,13 @@ main()
         auto i = m.findKey(k);
         assert(i != m.end());
         assert(i->key() == k);
-        m.erase(i);
+        auto j = i;
+        ++j;
+        i = m.erase(std::move(i));
         m.invariants();
+        --sz;
+        assert(std::distance(m.begin(), m.end()) == sz);
+        assert(i == j);
 //         m.display(std::cout);
 //         std::cout << '\n';
     }
