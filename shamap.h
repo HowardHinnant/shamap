@@ -1,6 +1,7 @@
 #ifndef SHAMAP_H
 #define SHAMAP_H
 
+
 #include <array>
 #include <cassert>
 #include <memory>
