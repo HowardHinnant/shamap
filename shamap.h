@@ -133,7 +133,8 @@ SHAMapAbstractNode::isLeaf () const
 
 class SHAMap
 {
-    using NodeStack = std::vector<std::pair<SHAMapAbstractNode*, SHAMapNodeID>>;
+    using NodeStack = std::vector<std::pair<std::shared_ptr<SHAMapAbstractNode>,
+                                  SHAMapNodeID>>;
 
     std::shared_ptr<SHAMapAbstractNode> root_;
 public:
@@ -160,7 +161,8 @@ private:
     SHAMapTreeNode* walkTowardsKey(uint256 const& id, NodeStack* stack = nullptr) const;
     SHAMapItem const* peekFirstItem(NodeStack& stack) const;
     SHAMapItem const* peekNextItem(uint256 const& id, NodeStack& stack) const;
-    SHAMapTreeNode* firstBelow(SHAMapAbstractNode*, NodeStack& stack) const;
+    SHAMapTreeNode* firstBelow(std::shared_ptr<SHAMapAbstractNode> node,
+                               NodeStack& stack) const;
     SHAMapAbstractNode* descendThrow(SHAMapInnerNode* parent, int branch) const;
     std::shared_ptr<SHAMapAbstractNode>
         descendThrow(std::shared_ptr<SHAMapInnerNode> parent, int branch) const;
