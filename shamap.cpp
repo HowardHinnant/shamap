@@ -1,5 +1,7 @@
 #include "shamap.h"
 
+#include <iostream>
+
 SHAMapAbstractNode::~SHAMapAbstractNode() = default;
 
 void
@@ -391,8 +393,10 @@ SHAMap::walkTowardsKey(uint256 const& id, NodeStack* stack) const
 
     while (!inNode->isLeaf())
     {
-        auto const branch = selectBranch(inNode->depth(), id);
         auto const inner = static_cast<SHAMapInnerNode*>(inNode);
+        if (!inner->has_common_prefix(id))
+            return nullptr;
+        auto const branch = selectBranch(inNode->depth(), id);
         if (inner->isEmptyBranch (branch))
             return nullptr;
 
@@ -433,7 +437,12 @@ SHAMap::upper_bound(uint256 const& id) const
         else
         {
             auto inner = static_cast<SHAMapInnerNode*>(node);
-            for (auto i = selectBranch(inner->depth(), id) + 1; i < 16; ++i)
+            int i = 0;
+            if (inner->has_common_prefix(id))
+                i = selectBranch(inner->depth(), id) + 1;
+            else if (id > inner->common())
+                i = 16;
+            for (; i < 16; ++i)
             {
                 if (!inner->isEmptyBranch(i))
                 {
@@ -473,6 +482,8 @@ SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
     unsigned depth = 0;
     std::shared_ptr<SHAMapInnerNode> parent;
     int branch;
+    NodeStack stack;
+    stack.push_back({node.get(), {node->depth(), node->key()}});
     while (!node->isLeaf())
     {
         auto inner = std::static_pointer_cast<SHAMapInnerNode>(node);
@@ -488,6 +499,7 @@ SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
             }
             parent = inner;
             node = descendThrow(parent, branch);
+            stack.push_back({node.get(), {node->depth(), node->key()}});
         }
         else
         {
@@ -500,6 +512,7 @@ SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
                                 std::make_shared<SHAMapTreeNode>(hash, item));
             new_inner->set_common(depth, prefix(depth, key));
             parent->setChild(selectBranch(parent_depth, key), new_inner);
+            stack.push_back({new_inner.get(), {new_inner->depth(), new_inner->key()}});
             return true;
         }
     }
@@ -511,6 +524,7 @@ SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
         auto inner = std::make_shared<SHAMapInnerNode>(uint256{});
         inner->setChildren(leaf, std::make_shared<SHAMapTreeNode>(hash, item));
         parent->setChild(branch, inner);
+        stack.push_back({inner.get(), {inner->depth(), inner->key()}});
         return true;
     }
     return false;
@@ -623,9 +637,9 @@ public:
 uint256
 make_key()
 {
-//     static std::mt19937_64 eng{5};
+    static std::mt19937_64 eng{5};
 //     static sequential eng{};
-    static sequential256 eng{};
+//     static sequential256 eng{};
 //     static sequential256_backwards eng{};
     uint256 a;
     for (unsigned i = 0; i < 4; ++i)
@@ -644,7 +658,7 @@ int
 main()
 {
     std::vector<uint256> keys;
-    for (int i = 0; i < 100000; ++i)
+    for (int i = 0; i < 20000; ++i)
         keys.push_back(make_key());    
     SHAMap m;
     std::size_t sz = 0;
@@ -657,6 +671,25 @@ main()
     }
 //     m.display(std::cout);
 //     std::cout << '\n';
+    for (auto i = m.begin(); i != m.end(); ++i)
+    {
+        auto j = m.upper_bound(i->key());
+        assert(std::next(i) == j);
+    }
+    for (unsigned i = 0; i < keys.size(); ++i)
+    {
+        auto k = make_key();
+        if (std::find(keys.begin(), keys.end(), k) != keys.end())
+        {
+            assert(false);
+            continue;
+        }
+        auto j = m.upper_bound(k);
+        for (auto h = m.begin(); h != j; ++h)
+            assert(h->key() < k);
+        for (auto h = j; h != m.end(); ++h)
+            assert(h->key() > k);
+    }
     for (auto const& k : keys)
     {
         auto i = m.findKey(k);
