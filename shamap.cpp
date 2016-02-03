@@ -383,6 +383,15 @@ SHAMap::descendThrow(std::shared_ptr<SHAMapInnerNode> parent, int branch) const
     return ret;
 }
 
+// If id exists in the SHAMap, or if the search ends on a non-matching leaf node,
+// then a pointer to it is returned.  In this case the stack->back() will contain
+// this leaf node.
+// 
+// Otherwise the search ended on an inner node and id is not in the map.  nullptr
+// is returned.  stack->back() will point to the last inner node searched.  If
+// this inner node has a common_prefix with id, then it has an empty slot where
+// id can or should go.  If this inner node does not have a common_prefix with id
+// then the id would be a child of a parent inner node that does not exist.
 SHAMapTreeNode*
 SHAMap::walkTowardsKey(uint256 const& id, NodeStack* stack) const
 {
@@ -478,56 +487,55 @@ bool
 SHAMap::insert(SHAMapHash const& hash, SHAMapItem const& item)
 {
     auto key = item.key();
-    auto node = root_;
-    unsigned depth = 0;
-    std::shared_ptr<SHAMapInnerNode> parent;
-    int branch;
     NodeStack stack;
-    stack.push_back({node, {node->depth(), node->key()}});
-    while (!node->isLeaf())
+    walkTowardsKey(key, &stack);
+    auto node = stack.back().first;
+    auto nodeID = stack.back().second;
+    stack.pop_back();
+    if (node->isLeaf())
     {
-        auto inner = std::static_pointer_cast<SHAMapInnerNode>(node);
-        if (inner->has_common_prefix(key))
+        // At leaf.  If this is not a duplicate,
+        //   need to create new inner node and insert current leaf and new leaf under it
+        auto leaf = std::static_pointer_cast<SHAMapTreeNode>(node);
+        if (item.key() != leaf->peekItem()->key())
         {
-            depth = inner->depth();
-            branch = selectBranch(depth, key);
-            if (inner->isEmptyBranch(branch))
-            {
-                // place new leaf here
-                inner->setChild(branch, std::make_shared<SHAMapTreeNode>(hash, item));
-                return true;
-            }
-            parent = inner;
-            node = descendThrow(parent, branch);
-            stack.push_back({node, {node->depth(), node->key()}});
-        }
-        else
-        {
-            // Create new inner node and place old inner node and new leaf below it
-            auto parent_depth = depth;
-            depth = inner->get_common_prefix(key);
-            auto new_inner = std::make_shared<SHAMapInnerNode>(uint256{});
-            new_inner->setChild(selectBranch(depth, inner->common()), inner);
-            new_inner->setChild(selectBranch(depth, key),
-                                std::make_shared<SHAMapTreeNode>(hash, item));
-            new_inner->set_common(depth, prefix(depth, key));
-            parent->setChild(selectBranch(parent_depth, key), new_inner);
-            stack.push_back({new_inner, {new_inner->depth(), new_inner->key()}});
+            auto inner = std::make_shared<SHAMapInnerNode>(uint256{});
+            inner->setChildren(leaf, std::make_shared<SHAMapTreeNode>(hash, item));
+            assert(!stack.empty());
+            auto parent = std::static_pointer_cast<SHAMapInnerNode>(stack.back().first);
+            auto branch = selectBranch(stack.back().second.depth(), key);
+            parent->setChild(branch, inner);
             return true;
         }
+        return false;
     }
-    // At leaf.  If this is not a duplicate,
-    //   need to create new inner node and insert current leaf and new leaf under it
-    auto leaf = std::static_pointer_cast<SHAMapTreeNode>(node);
-    if (item.key() != leaf->peekItem()->key())
+
+    auto inner = std::static_pointer_cast<SHAMapInnerNode>(node);
+    if (inner->has_common_prefix(key))
     {
-        auto inner = std::make_shared<SHAMapInnerNode>(uint256{});
-        inner->setChildren(leaf, std::make_shared<SHAMapTreeNode>(hash, item));
-        parent->setChild(branch, inner);
-        stack.push_back({inner, {inner->depth(), inner->key()}});
+        auto depth = inner->depth();
+        auto branch = selectBranch(depth, key);
+        assert(inner->isEmptyBranch(branch));
+        // place new leaf here
+        inner->setChild(branch, std::make_shared<SHAMapTreeNode>(hash, item));
         return true;
     }
-    return false;
+    else
+    {
+        // Create new inner node and place old inner node and new leaf below it
+        assert(!stack.empty());
+        auto parent = std::static_pointer_cast<SHAMapInnerNode>(stack.back().first);
+        auto parent_depth = parent->depth();
+        auto depth = inner->get_common_prefix(key);
+        auto new_inner = std::make_shared<SHAMapInnerNode>(uint256{});
+        new_inner->setChild(selectBranch(depth, inner->common()), inner);
+        new_inner->setChild(selectBranch(depth, key),
+                            std::make_shared<SHAMapTreeNode>(hash, item));
+        new_inner->set_common(depth, prefix(depth, key));
+        parent->setChild(selectBranch(parent_depth, key), new_inner);
+        stack.push_back({new_inner, {new_inner->depth(), new_inner->key()}});
+        return true;
+    }
 }
 
 SHAMap::const_iterator
